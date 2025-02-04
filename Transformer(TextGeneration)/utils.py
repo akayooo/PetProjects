@@ -1,11 +1,12 @@
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader #type: ignore
+import numpy as np #type: ignore
+import torch.nn.functional as F #type: ignore
 import random
-import torch
+import torch #type: ignore
 import copy
 import datetime
 import traceback
+import heapq
 
 
 def load(fname, chunk_size=200):
@@ -72,7 +73,7 @@ def train_eval_loop(model, train_dataset, val_dataset, criterion, lr=1e-4, epoch
     train_dataloader = data_loader_ctor(train_dataset, batch_size=batch_size, shuffle=shuffle_train, num_workers=dataloader_workers_n)
     val_dataloader = data_loader_ctor(val_dataset, batch_size=batch_size, shuffle=shuffle_train, num_workers=dataloader_workers_n)
 
-    best_val_loss = float('-inf')
+    best_val_loss = float('inf')
     best_epoch_i = 0
     best_model = copy.deepcopy(model)
 
@@ -90,7 +91,7 @@ def train_eval_loop(model, train_dataset, val_dataset, criterion, lr=1e-4, epoch
                     break
 
                 bacth_x = copy_data_to_device(bacth_x, device)
-                bacth_y = copy_data_to_device(batch_y, device)
+                batch_y = copy_data_to_device(batch_y, device)
 
                 pred = model(bacth_x)
                 loss = criterion(pred, batch_y)
@@ -118,7 +119,7 @@ def train_eval_loop(model, train_dataset, val_dataset, criterion, lr=1e-4, epoch
                         break
 
                     bacth_x = copy_data_to_device(bacth_x, device)
-                    bathc_y = copy_data_to_device(batch_y, device)
+                    batch_y = copy_data_to_device(batch_y, device)
 
                     pred = model(bacth_x)
                     loss = criterion(pred, batch_y)
@@ -178,3 +179,75 @@ class LanguageModelDataset(Dataset):
         return seed_part, target_part
 
 
+class GreedyGenerator:
+    def __init__(self, model, tokenizer, device='cuda', eos_token_id=3):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = torch.device(device)
+        self.model.to(self.device)
+        self.eos_token_id = eos_token_id
+
+    def __call__(self, seed_text, max_steps_n=40):
+        seed_tokens = self.tokenizer.encode([seed_text])[0]
+
+        for _ in range(max_steps_n):
+            in_bacth = torch.tensor(seed_tokens).unsqueeze(0).to(self.device)
+            best_next_token =  self.model(in_bacth)[0, -1].argmax()
+            if best_next_token == self.eos_token_id:
+                break
+
+            seed_tokens.append(best_next_token)
+
+        return self.tokenizer.decode([seed_tokens])[0]
+    
+
+class BeamGenerator:
+    def __init__(self, model, tokenizer, device='cuda', eos_token_id=3):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = torch.device(device)
+        self.model.to(self.device)
+        self.eos_token_id = eos_token_id
+
+    def __call__(self, seed_text, max_steps_n=50, return_hypotheses_n=5, beamsize=5):
+        seed_tokens = self.tokenizer.encode([seed_text])[0]
+        initial_length = len(seed_tokens)
+
+        partial_hypotheses = [(0, seed_tokens)]
+        final_hypotheses = []
+
+        while len(partial_hypotheses) > 0:
+            cur_partial_score, cur_partial_hypothesis = heapq.heappop(partial_hypotheses)
+
+            in_batch = torch.tensor(cur_partial_hypothesis).unsqueeze(0).to(self.device)
+            next_tokens_logits = self.model(in_batch)[0, -1]
+            next_tokens_logproba = F.log_softmax(next_tokens_logits)
+            topk_continuations = next_tokens_logproba.topk(beamsize)
+
+            for token_score, token_idx in zip(topk_continuations.values, topk_continuations.indices):
+                token_score = float(token_score)
+                token_idx = int(token_idx)
+
+                old_denorm_score = cur_partial_score * np.sqrt(len(cur_partial_hypothesis))
+                new_score = (old_denorm_score - token_score) / np.sqrt(len(cur_partial_hypothesis) + 1)
+
+                new_hypothesis = cur_partial_hypothesis + [token_idx]
+                new_item = (new_score, new_hypothesis)
+
+                if token_idx == self.eos_token_id or len(new_hypothesis) - initial_length >= max_steps_n:
+                    final_hypotheses.append(new_item)
+                else:
+                    heapq.heappush(partial_hypotheses, new_item)
+
+            if len(partial_hypotheses) > beamsize:
+                partial_hypotheses = heapq.nsmallest(beamsize, partial_hypotheses)
+                heapq.heapify(partial_hypotheses)
+
+        final_scores, final_token_lists = zip(*final_hypotheses)
+        final_texts = self.tokenizer.decode(list(final_token_lists))
+
+        result = list(zip(final_scores, final_texts))
+        result.sort()
+        result = result[:return_hypotheses_n]
+
+        return result                
