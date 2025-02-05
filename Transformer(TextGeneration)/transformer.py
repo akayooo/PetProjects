@@ -25,7 +25,7 @@ if torch.cuda.is_available():
     print("Текущий GPU:", torch.cuda.current_device())
 
 
-all_chunks = load('./data/war_and_peace.txt')
+all_chunks = load('/home/akayo/Рабочий стол/PetProjects/Transformer(TextGeneration)/data/war_and_peace.txt')
 np.random.shuffle(all_chunks)
 
 
@@ -35,8 +35,8 @@ test_texts = all_chunks[TRAIN_SPLIT:]
 print(f'Размеры выборок train/test: \n {len(train_texts)} \n {len(test_texts)}')
 
 
-BPE_MODEL_FILENAME = './data/war_and_peace_bpe_train.txt'
-TRAIN_TEXT_FILENAME = './data/war_and_peace_bpe_train.txt'
+BPE_MODEL_FILENAME = '/home/akayo/Рабочий стол/PetProjects/Transformer(TextGeneration)/data/war_and_peace_bpe_train.txt'
+TRAIN_TEXT_FILENAME = '/home/akayo/Рабочий стол/PetProjects/Transformer(TextGeneration)/data/war_and_peace_bpe_train.txt'
 save_texts_to_file(train_texts, TRAIN_TEXT_FILENAME)
 yttm.BPE.train(data=TRAIN_TEXT_FILENAME, vocab_size=1000, model=BPE_MODEL_FILENAME)
 tokenizer = yttm.BPE(BPE_MODEL_FILENAME)
@@ -177,7 +177,7 @@ transformer =  LanguageModel(tokenizer.vocab_size(),
                             emb_dropout=0.1
                              )
 
-''' ОБУЧЕНИЕ МОДЕЛИ НА CUDA
+
 print('Количество параметров:', get_params_number(transformer))
 (best_val_loss, best_transformer_model) = train_eval_loop(
     transformer,
@@ -193,13 +193,13 @@ print('Количество параметров:', get_params_number(transforme
     max_batches_per_val=1000,
     lr_scheduler_ctor=lr_sheduler
 )
-torch.save(best_transformer_model.state_dict(), './models/war_and_peace_best_transformer.pth')
-''' 
+torch.save(best_transformer_model.state_dict(), '/home/akayo/Рабочий стол/PetProjects/Transformer(TextGeneration)/models/war_and_peace_best_transformer.pth')
 
 
-transformer.load_state_dict(torch.load('./models/war_and_peace_best_transformer.pth'))
+
+transformer.load_state_dict(torch.load('/home/akayo/Рабочий стол/PetProjects/Transformer(TextGeneration)/models/war_and_peace_best_transformer.pth'))
 my_greedy_generator = GreedyGenerator(transformer, tokenizer)
-my_greedy_generator('сказала княжна, оглядывая Андре')
+print(my_greedy_generator('сказала княжна, оглядывая Андре'))
 
 
 beam_generator = BeamGenerator(transformer, tokenizer)
