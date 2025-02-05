@@ -9,6 +9,61 @@ import traceback
 import heapq
 
 
+def mask_for_attention(length):
+    full_mask = torch.ones(length, length)
+    ignore_mask = torch.tril(full_mask) < 1
+    full_mask.masked_fill_(ignore_mask, float('-inf'))
+    full_mask.masked_fill_(~ignore_mask, 0)
+
+    return full_mask
+
+
+def positional_encoding(max_length, embedding_size):
+    time = np.pi * torch.arange(0, max_length).float()
+    freq_dviders = torch.arange(1, embedding_size // 2 + 1).float()
+    inputs = time[:, None] / freq_dviders[None, :]
+
+    result = torch.zeros(max_length, embedding_size)
+    result[:, 0::2] = torch.sin(inputs)
+    result[:, 1::2] = torch.cos(inputs)
+
+    return result
+
+
+def multihead_attention(queries, keys, values,
+                        keys_padding_mask, dependency_mask,
+                        is_training, weights_dropout):
+    
+    relevances = torch.einsum('bvhs,bkhs->bvkh', (queries, keys))
+
+    padding_mask_expanded = keys_padding_mask[:, None, :, None].expand_as(relevances)
+    relevances.masked_fill_(padding_mask_expanded, float('-inf'))
+
+    relevances = relevances + dependency_mask[None, :, :, None].expand_as(relevances)
+    
+    normed_rels = F.softmax(relevances, dim=2)    
+    normed_rels = F.dropout(normed_rels, weights_dropout, is_training)
+
+    normed_rels_expanded = normed_rels.unsqueeze(-1)
+    values_expanded = values.unsqueeze(1)
+
+    weighted_values = normed_rels_expanded * values_expanded
+    result = weighted_values.sum(2)
+
+    return result, normed_rels
+
+
+def lm_cross_entropy(pred, target):
+    pred_flat = pred.view(-1, pred.shape[-1])
+    target_flat = target.view(-1)
+
+    return F.cross_entropy(pred_flat, target_flat, ignore_index=0)
+
+
+def lr_sheduler(optimizer):
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=20, factor=0.5, verbose=True)
+
+
 def load(fname, chunk_size=200):
     with open(fname, 'r', encoding='utf-8')as fin:
         full_text = fin.read()
